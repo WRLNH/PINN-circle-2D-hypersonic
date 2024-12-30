@@ -87,7 +87,7 @@ def train(in_var, model_eq, model_neq, loss_fn, optimizer_eq, optimizer_neq, fie
     out_eq = model_eq(in_var)
     out_neq = model_neq(in_var)
     residuals = CalResidualsLoss(in_var, out_eq, out_neq)
-    loss_BC_phi = CalBCLoss(out_eq, fields)
+    loss_BC = CalBCLoss(out_eq, fields)
 
     loss_total = residuals + loss_BC
     loss_total.backward()
