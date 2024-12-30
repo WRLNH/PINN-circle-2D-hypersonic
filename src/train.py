@@ -5,6 +5,7 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 import os
 import time
+import random
 from tqdm import tqdm
 
 from basic_model import DeepModel_single, DeepModel_multi, gradients
@@ -59,6 +60,8 @@ def CalBCLoss(out_eq, fields):
     return loss_rho + loss_rhou + loss_rhov
 
 def setup_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
@@ -86,7 +89,7 @@ def train(in_var, model_eq, model_neq, loss_fn, optimizer_eq, optimizer_neq, fie
     residuals = CalResidualsLoss(in_var, out_eq, out_neq)
     loss_BC_phi = CalBCLoss(out_eq, fields)
 
-    loss_total = residuals + loss_BC_phi
+    loss_total = residuals + loss_BC
     loss_total.backward()
     pass
 
