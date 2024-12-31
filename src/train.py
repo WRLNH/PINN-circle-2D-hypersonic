@@ -46,6 +46,7 @@ def CalBCLoss(in_var, out_eq, out_neq, fields):
     out_neq_BC = out_neq[
         N_internal : N_internal + 2 * N_BC_horizontal + 2 * N_BC_vertical
     ]
+    out_BC = out_eq_BC + out_neq_BC
     BC_exact = fields[N_internal : N_internal + 2 * N_BC_horizontal + 2 * N_BC_vertical]
     in_BC = in_var[N_internal : N_internal + 2 * N_BC_horizontal + 2 * N_BC_vertical]
 
@@ -267,7 +268,88 @@ def CalBCLoss(in_var, out_eq, out_neq, fields):
 
     loss_fBC = loss_left + loss_right + loss_up + loss_down
 
-    return loss_rho + loss_rhou + loss_rhov + loss_fBC
+    """Calculate L_EBC"""
+    # 对于左边界只计算i = [1, 5, 8]的点
+    range = [1, 5, 8]
+    temp = 0
+    R = torch.zeros(N_BC_horizontal, 3)
+    cond = torch.zeros(N_BC_horizontal, 3)
+    for i in range:
+        R[:, temp] = (
+            D2Q9_Model.xi[i][0] * gradients(out_BC[:N_BC_horizontal, i], in_left[:, 0])
+            + D2Q9_Model.xi[i][1]
+            * gradients(out_BC[:N_BC_horizontal, i], in_left[:, 1])
+            + 1 / tau * out_neq_BC[:N_BC_horizontal, i] / 100000
+        )
+    loss_left = loss(R, cond)
+
+    # 对于右边界只计算i = [3, 6, 7]的点
+    range = [3, 6, 7]
+    temp = 0
+    R = torch.zeros(N_BC_horizontal, 3)
+    cond = torch.zeros(N_BC_horizontal, 3)
+    for i in range:
+        R[:, temp] = (
+            D2Q9_Model.xi[i][0]
+            * gradients(
+                out_BC[N_BC_horizontal : 2 * N_BC_horizontal, i], in_right[:, 0]
+            )
+            + D2Q9_Model.xi[i][1]
+            * gradients(
+                out_BC[N_BC_horizontal : 2 * N_BC_horizontal, i], in_right[:, 1]
+            )
+            + 1 / tau * out_neq_BC[N_BC_horizontal : 2 * N_BC_horizontal, i] / 100000
+        )
+    loss_right = loss(R, cond)
+
+    # 对于上边界只计算i = [4, 7, 8]的点
+    range = [4, 7, 8]
+    temp = 0
+    R = torch.zeros(N_BC_vertical, 3)
+    cond = torch.zeros(N_BC_vertical, 3)
+    for i in range:
+        R[:, temp] = (
+            D2Q9_Model.xi[i][0]
+            * gradients(
+                out_BC[2 * N_BC_horizontal : 2 * N_BC_horizontal + N_BC_vertical, i],
+                in_up[:, 0],
+            )
+            + D2Q9_Model.xi[i][1]
+            * gradients(
+                out_BC[2 * N_BC_horizontal : 2 * N_BC_horizontal + N_BC_vertical, i],
+                in_up[:, 1],
+            )
+            + 1
+            / tau
+            * out_neq_BC[2 * N_BC_horizontal : 2 * N_BC_horizontal + N_BC_vertical, i]
+            / 100000
+        )
+    loss_up = loss(R, cond)
+
+    # 对于上边界只计算i = [2, 5, 6]的点
+    range = [2, 5, 6]
+    temp = 0
+    R = torch.zeros(N_BC_vertical, 3)
+    cond = torch.zeros(N_BC_vertical, 3)
+    for i in range:
+        R[:, temp] = (
+            D2Q9_Model.xi[i][0]
+            * gradients(
+                out_BC[2 * N_BC_horizontal + N_BC_vertical :, i],
+                in_down[:, 0],
+            )
+            + D2Q9_Model.xi[i][1]
+            * gradients(
+                out_BC[2 * N_BC_horizontal + N_BC_vertical :, i],
+                in_down[:, 1],
+            )
+            + 1 / tau * out_neq_BC[2 * N_BC_horizontal + N_BC_vertical :, i] / 100000
+        )
+    loss_down = loss(R, cond)
+
+    loss_EBC = loss_left + loss_right + loss_up + loss_down
+
+    return loss_rho + loss_rhou + loss_rhov + loss_fBC + loss_EBC
 
 
 def setup_seed(seed):
