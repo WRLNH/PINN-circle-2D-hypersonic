@@ -8,17 +8,18 @@ import time
 import random
 from tqdm import tqdm
 
-from basic_model import DeepModel_single, DeepModel_multi, gradients
+from basic_model import DeepModel_single, gradients
 from D2Q9 import D2Q9_Model
+
 
 class Net(DeepModel_single):
     def __init__(self, planes):
         super(Net, self).__init__(planes, active=nn.Tanh())
 
+
 def CalResidualsLoss(in_var, out_eq, out_neq):
     loss = nn.MSELoss()
 
-    tau = 1.3978e-5
     f = out_eq + out_neq
     f_eq = out_eq
     f_neq = out_neq
@@ -26,38 +27,248 @@ def CalResidualsLoss(in_var, out_eq, out_neq):
     dfda = gradients(f, in_var)
     dfdx, dfdy = dfda[..., 0:1], dfda[..., 1:2]
     for i in range(0, 9):
-        R[:, i] = D2Q9_Model.xi[i][0] * dfdx[:, i] + D2Q9_Model.xi[i][1] * dfdy[:, i] + 1 / tau * f_neq[:, i]
+        R[:, i] = (
+            D2Q9_Model.xi[i][0] * dfdx[:, i]
+            + D2Q9_Model.xi[i][1] * dfdy[:, i]
+            + 1 / tau * f_neq[:, i]
+        )
     R = torch.sum(R, dim=1)
     cond = torch.zeros_like(R)
     return loss(R, cond)
 
-def CalBCLoss(out_eq, fields):
+
+def CalBCLoss(in_var, out_eq, out_neq, fields):
     loss = nn.MSELoss()
 
+    out_eq_BC = out_eq[
+        N_internal : N_internal + 2 * N_BC_horizontal + 2 * N_BC_vertical
+    ]
+    out_neq_BC = out_neq[
+        N_internal : N_internal + 2 * N_BC_horizontal + 2 * N_BC_vertical
+    ]
+    BC_exact = fields[N_internal : N_internal + 2 * N_BC_horizontal + 2 * N_BC_vertical]
+    in_BC = in_var[N_internal : N_internal + 2 * N_BC_horizontal + 2 * N_BC_vertical]
+
     """Calculate L_mBC"""
-    BC_out = out_eq[2000:2600]
-    BC_exact = fields[2000:2600]
-    rho_pred = torch.sum(BC_out, dim=1)
+    rho_pred = torch.sum(out_eq_BC, dim=1)
     rho_exact = BC_exact[:, 2]
     u_exact = BC_exact[:, 3]
     v_exact = BC_exact[:, 4]
     loss_rho = loss(rho_pred, rho_exact)
 
-    rhou = torch.zeros_like(BC_out)
-    rhov = torch.zeros_like(BC_out)
+    rhou = torch.zeros_like(out_eq_BC)
+    rhov = torch.zeros_like(out_eq_BC)
     for i in range(0, 9):
-        rhou[:, i] = D2Q9_Model.xi[i][0] * BC_out[:, i]
-        rhov[:, i] = D2Q9_Model.xi[i][1] * BC_out[:, i]
+        rhou[:, i] = D2Q9_Model.xi[i][0] * out_eq_BC[:, i]
+        rhov[:, i] = D2Q9_Model.xi[i][1] * out_eq_BC[:, i]
     rhou_pred = torch.sum(rhou, dim=1)
     rhov_pred = torch.sum(rhov, dim=1)
     loss_rhou = loss(rhou_pred, rho_exact * u_exact)
     loss_rhov = loss(rhov_pred, rho_exact * v_exact)
 
     """Calculate L_fBC"""
+    in_left = in_BC[:N_BC_horizontal]
+    in_right = in_BC[N_BC_horizontal : 2 * N_BC_horizontal]
+    in_up = in_BC[2 * N_BC_horizontal : 2 * N_BC_horizontal + N_BC_vertical]
+    in_down = in_BC[2 * N_BC_horizontal + N_BC_vertical :]
+    out_left = out_eq_BC[:N_BC_horizontal]
+    out_right = out_eq_BC[N_BC_horizontal : 2 * N_BC_horizontal]
+    out_up = out_eq_BC[2 * N_BC_horizontal : 2 * N_BC_horizontal + N_BC_vertical]
+    out_down = out_eq_BC[2 * N_BC_horizontal + N_BC_vertical :]
 
+    # 对于左边界只计算i = [3, 6, 7]的点
+    f_eq = torch.zeros(out_left.shape[0], 3)
+    f_neq = torch.zeros(out_left.shape[0], 3)
+    temp = 0
+    range = [3, 6, 7]
+    for i in range:
+        f_eq[:, temp] = (
+            D2Q9_Model.w[i]
+            * rho_exact[:N_BC_horizontal]
+            * (
+                1
+                + (
+                    D2Q9_Model.xi[i][0] * u_exact[0:N_BC_horizontal]
+                    + D2Q9_Model.xi[i][1] * v_exact[0:N_BC_horizontal]
+                )
+                / RT
+                + (
+                    D2Q9_Model.xi[i][0] * u_exact[0:N_BC_horizontal]
+                    + D2Q9_Model.xi[i][1] * v_exact[0:N_BC_horizontal]
+                )
+                ** 2
+                / (2 * RT**2)
+                - (u_exact[0:N_BC_horizontal] ** 2 + v_exact[0:N_BC_horizontal] ** 2)
+                / (2 * RT)
+            )
+        )
+        temp += 1
+    f_neq = (
+        -tau
+        * (
+            D2Q9_Model.xi[i][0] * gradients(f_eq, in_left[:, 0])
+            + D2Q9_Model.xi[i][1] * gradients(f_eq, in_left[:, 1])
+        )
+        * 100000
+    )  # 将F_neq放大至O(1)量级
+    col1 = out_neq_BC[:N_BC_horizontal][:, 3].unsqueeze(1)
+    col2 = out_neq_BC[:N_BC_horizontal][:, 6].unsqueeze(1)
+    col3 = out_neq_BC[:N_BC_horizontal][:, 7].unsqueeze(1)
+    f_neq_left = torch.cat((col1, col2, col3), dim=1)
+    loss_left = loss(f_neq_left, f_neq)
 
+    # 对于右边界只计算i = [1, 5, 8]的点
+    f_eq = torch.zeros(out_right.shape[0], 3)
+    f_neq = torch.zeros(out_right.shape[0], 3)
+    temp = 0
+    range = [1, 5, 8]
+    for i in range:
+        f_eq[:, temp] = (
+            D2Q9_Model.w[i]
+            * rho_exact[N_BC_horizontal : 2 * N_BC_horizontal]
+            * (
+                1
+                + (
+                    D2Q9_Model.xi[i][0] * u_exact[N_BC_horizontal : 2 * N_BC_horizontal]
+                    + D2Q9_Model.xi[i][1]
+                    * v_exact[N_BC_horizontal : 2 * N_BC_horizontal]
+                )
+                / RT
+                + (
+                    D2Q9_Model.xi[i][0] * u_exact[N_BC_horizontal : 2 * N_BC_horizontal]
+                    + D2Q9_Model.xi[i][1]
+                    * v_exact[N_BC_horizontal : 2 * N_BC_horizontal]
+                )
+                ** 2
+                / (2 * RT**2)
+                - (
+                    u_exact[N_BC_horizontal : 2 * N_BC_horizontal] ** 2
+                    + v_exact[N_BC_horizontal : 2 * N_BC_horizontal] ** 2
+                )
+                / (2 * RT)
+            )
+        )
+        temp += 1
+    f_neq = (
+        -tau
+        * (
+            D2Q9_Model.xi[i][0] * gradients(f_eq, in_right[:, 0])
+            + D2Q9_Model.xi[i][1] * gradients(f_eq, in_right[:, 1])
+        )
+        * 100000
+    )  # 将F_neq放大至O(1)量级
+    col1 = out_neq_BC[N_BC_horizontal : 2 * N_BC_horizontal][:, 1].unsqueeze(1)
+    col2 = out_neq_BC[N_BC_horizontal : 2 * N_BC_horizontal][:, 5].unsqueeze(1)
+    col3 = out_neq_BC[N_BC_horizontal : 2 * N_BC_horizontal][:, 8].unsqueeze(1)
+    f_neq_right = torch.cat((col1, col2, col3), dim=1)
+    loss_right = loss(f_neq_right, f_neq)
 
-    return loss_rho + loss_rhou + loss_rhov
+    # 对于上边界只计算i = [2, 5, 6]的点
+    f_eq = torch.zeros(out_up.shape[0], 3)
+    f_neq = torch.zeros(out_up.shape[0], 3)
+    temp = 0
+    range = [2, 5, 6]
+    for i in range:
+        f_eq[:, temp] = (
+            D2Q9_Model.w[i]
+            * rho_exact[2 * N_BC_horizontal : 2 * N_BC_horizontal + N_BC_vertical]
+            * (
+                1
+                + (
+                    D2Q9_Model.xi[i][0]
+                    * u_exact[2 * N_BC_horizontal : 2 * N_BC_horizontal + N_BC_vertical]
+                    + D2Q9_Model.xi[i][1]
+                    * v_exact[2 * N_BC_horizontal : 2 * N_BC_horizontal + N_BC_vertical]
+                )
+                / RT
+                + (
+                    D2Q9_Model.xi[i][0]
+                    * u_exact[2 * N_BC_horizontal : 2 * N_BC_horizontal + N_BC_vertical]
+                    + D2Q9_Model.xi[i][1]
+                    * v_exact[2 * N_BC_horizontal : 2 * N_BC_horizontal + N_BC_vertical]
+                )
+                ** 2
+                / (2 * RT**2)
+                - (
+                    u_exact[2 * N_BC_horizontal : 2 * N_BC_horizontal + N_BC_vertical]
+                    ** 2
+                    + v_exact[2 * N_BC_horizontal : 2 * N_BC_horizontal + N_BC_vertical]
+                    ** 2
+                )
+                / (2 * RT)
+            )
+        )
+        temp += 1
+    f_neq = (
+        -tau
+        * (
+            D2Q9_Model.xi[i][0] * gradients(f_eq, in_up[:, 0])
+            + D2Q9_Model.xi[i][1] * gradients(f_eq, in_up[:, 1])
+        )
+        * 100000
+    )  # 将F_neq放大至O(1)量级
+    col1 = out_neq_BC[2 * N_BC_horizontal : 2 * N_BC_horizontal + N_BC_vertical][
+        :, 2
+    ].unsqueeze(1)
+    col2 = out_neq_BC[2 * N_BC_horizontal : 2 * N_BC_horizontal + N_BC_vertical][
+        :, 5
+    ].unsqueeze(1)
+    col3 = out_neq_BC[2 * N_BC_horizontal : 2 * N_BC_horizontal + N_BC_vertical][
+        :, 6
+    ].unsqueeze(1)
+    f_neq_up = torch.cat((col1, col2, col3), dim=1)
+    loss_up = loss(f_neq_up, f_neq)
+
+    # 对于下边界只计算i = [4, 7, 8]的点
+    f_eq = torch.zeros(out_down.shape[0], 3)
+    f_neq = torch.zeros(out_down.shape[0], 3)
+    temp = 0
+    range = [4, 7, 8]
+    for i in range:
+        f_eq[:, temp] = (
+            D2Q9_Model.w[i]
+            * rho_exact[2 * N_BC_horizontal + N_BC_vertical :]
+            * (
+                1
+                + (
+                    D2Q9_Model.xi[i][0] * u_exact[2 * N_BC_horizontal + N_BC_vertical :]
+                    + D2Q9_Model.xi[i][1]
+                    * v_exact[2 * N_BC_horizontal + N_BC_vertical :]
+                )
+                / RT
+                + (
+                    D2Q9_Model.xi[i][0] * u_exact[2 * N_BC_horizontal + N_BC_vertical :]
+                    + D2Q9_Model.xi[i][1]
+                    * v_exact[2 * N_BC_horizontal + N_BC_vertical :]
+                )
+                ** 2
+                / (2 * RT**2)
+                - (
+                    u_exact[2 * N_BC_horizontal + N_BC_vertical :] ** 2
+                    + v_exact[2 * N_BC_horizontal + N_BC_vertical :] ** 2
+                )
+                / (2 * RT)
+            )
+        )
+        temp += 1
+    f_neq = (
+        -tau
+        * (
+            D2Q9_Model.xi[i][0] * gradients(f_eq, in_down[:, 0])
+            + D2Q9_Model.xi[i][1] * gradients(f_eq, in_down[:, 1])
+        )
+        * 100000
+    )  # 将F_neq放大至O(1)量级
+    col1 = out_neq_BC[2 * N_BC_horizontal + N_BC_vertical :][:, 4].unsqueeze(1)
+    col2 = out_neq_BC[2 * N_BC_horizontal + N_BC_vertical :][:, 7].unsqueeze(1)
+    col3 = out_neq_BC[2 * N_BC_horizontal + N_BC_vertical :][:, 8].unsqueeze(1)
+    f_neq_down = torch.cat((col1, col2, col3), dim=1)
+    loss_down = loss(f_neq_down, f_neq)
+
+    loss_fBC = loss_left + loss_right + loss_up + loss_down
+
+    return loss_rho + loss_rhou + loss_rhov + loss_fBC
+
 
 def setup_seed(seed):
     random.seed(seed)
@@ -66,19 +277,21 @@ def setup_seed(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
 
+
 def read_data():
-    data_internal = pd.read_csv('./data/data_internal.csv', header=None)
+    data_internal = pd.read_csv("./data/data_internal.csv", header=None)
     data_internal = data_internal.to_numpy()
-    data_left = pd.read_csv('./data/data_left.csv', header=None)
+    data_left = pd.read_csv("./data/data_left.csv", header=None)
     data_left = data_left.to_numpy()
-    data_right = pd.read_csv('./data/data_right.csv', header=None)
+    data_right = pd.read_csv("./data/data_right.csv", header=None)
     data_right = data_right.to_numpy()
-    data_up = pd.read_csv('./data/data_up.csv', header=None)
+    data_up = pd.read_csv("./data/data_up.csv", header=None)
     data_up = data_up.to_numpy()
-    data_down = pd.read_csv('./data/data_down.csv', header=None)
+    data_down = pd.read_csv("./data/data_down.csv", header=None)
     data_down = data_down.to_numpy()
-    
+
     return data_internal, data_left, data_right, data_up, data_down
+
 
 def train(in_var, model_eq, model_neq, loss_fn, optimizer_eq, optimizer_neq, fields):
     in_var.requires_grad = True
@@ -93,11 +306,17 @@ def train(in_var, model_eq, model_neq, loss_fn, optimizer_eq, optimizer_neq, fie
     loss_total.backward()
     pass
 
+
 if __name__ == "__main__":
     if torch.cuda.is_available():
-        device = torch.device('cuda')
+        device = torch.device("cuda")
     else:
-        device = torch.device('cpu')
+        device = torch.device("cpu")
+
+    R = 8.314
+    T = 200
+    RT = R * T
+    tau = 1.402485925e-5
 
     setup_seed(1234)
     N_internal = 2000
@@ -106,7 +325,7 @@ if __name__ == "__main__":
     Box = [-0.5, 0, 0.5, 0.4]
 
     data = read_data()
-    data = list(map(np.random.permutation, data)) # 打乱数据
+    data = list(map(np.random.permutation, data))  # 打乱数据
     internal = data[0]
     left = data[1]
     right = data[2]
@@ -119,8 +338,13 @@ if __name__ == "__main__":
     up = up[:N_BC_vertical]
     down = down[:N_BC_vertical]
 
-    input = np.concatenate([internal[:, 0:2], left[:, 0:2], right[:, 0:2], up[:, 0:2], down[:, 0:2]], axis=0)
-    field = np.concatenate([internal[:, 2:], left[:, 2:], right[:, 2:], up[:, 2:], down[:, 2:]], axis=0)
+    input = np.concatenate(
+        [internal[:, 0:2], left[:, 0:2], right[:, 0:2], up[:, 0:2], down[:, 0:2]],
+        axis=0,
+    )
+    field = np.concatenate(
+        [internal[:, 2:], left[:, 2:], right[:, 2:], up[:, 2:], down[:, 2:]], axis=0
+    )
     input = torch.tensor(input, dtype=torch.float32, device=device)
     field = torch.tensor(field, dtype=torch.float32)
 

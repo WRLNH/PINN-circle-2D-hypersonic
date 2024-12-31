@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-data = pd.read_csv('./data/filtered_data.csv', header=None)
+data = pd.read_csv("./data/filtered_data.csv", header=None)
 data = data.to_numpy()
 
 data_left = []
@@ -28,8 +28,8 @@ data_right[:, 0] = 0.5
 data_up[:, 1] = 0.4
 data_down[:, 1] = 0
 
-np.savetxt('./data/data_internal.csv', data, delimiter=',')
-np.savetxt('./data/data_left.csv', data_left, delimiter=',')
-np.savetxt('./data/data_right.csv', data_right, delimiter=',')
-np.savetxt('./data/data_up.csv', data_up, delimiter=',')
-np.savetxt('./data/data_down.csv', data_down, delimiter=',')
+np.savetxt("./data/data_internal.csv", data, delimiter=",")
+np.savetxt("./data/data_left.csv", data_left, delimiter=",")
+np.savetxt("./data/data_right.csv", data_right, delimiter=",")
+np.savetxt("./data/data_up.csv", data_up, delimiter=",")
+np.savetxt("./data/data_down.csv", data_down, delimiter=",")
