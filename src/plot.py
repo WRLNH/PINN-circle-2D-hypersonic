@@ -7,7 +7,9 @@ from D2Q9 import D2Q9_Model
 
 model = torch.load("./result/Model_eq.pth").to("cuda")
 data = pd.read_csv("./data/filtered_data.csv", header=None)
+log_loss = pd.read_csv("./result/log_loss.csv", header=None)
 data = data.to_numpy()
+log_loss = log_loss.to_numpy()
 
 x = data[:, 0]
 y = data[:, 1]
@@ -35,13 +37,30 @@ rhov = torch.sum(rhov, dim=1).detach().cpu().numpy()
 u = rhou / rho
 v = rhov / rho
 
-plt.subplot(2, 1, 1)
+plt.figure()
+plt.subplot(2, 2, 1)
 plt.scatter(x, y, c=rhou, s=1, cmap="rainbow")
 plt.colorbar()
+plt.title("rho*u")
 plt.axis("equal")
 
-plt.subplot(2, 1, 2)
+plt.subplot(2, 2, 2)
+plt.scatter(x, y, c=rhov, s=1, cmap="rainbow")
+plt.colorbar()
+plt.title("rho*v")
+plt.axis("equal")
+
+plt.subplot(2, 2, 3)
 plt.scatter(x, y, c=rhou_exact, s=1, cmap="rainbow")
 plt.colorbar()
 plt.axis("equal")
+
+plt.subplot(2, 2, 4)
+plt.scatter(x, y, c=rhov_exact, s=1, cmap="rainbow")
+plt.colorbar()
+plt.axis("equal")
+
+plt.figure()
+plt.plot(log_loss)
+plt.yscale("log")
 plt.show()

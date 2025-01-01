@@ -17,7 +17,7 @@ class Net(DeepModel_single):
         super(Net, self).__init__(planes, active=nn.Tanh())
 
 
-def CalResidualsLoss(in_var, out_eq, out_neq):
+def CalResidualsLoss(in_var, out_eq, out_neq, fields):
     f = out_eq + out_neq / 100000
     f_eq = out_eq
     f_neq = out_neq / 100000
@@ -33,7 +33,12 @@ def CalResidualsLoss(in_var, out_eq, out_neq):
     R = R**2
     R = torch.sum(R, dim=1)
     R = R.mean()
-    return R
+
+    rho_pred = torch.sum(f, dim=1)
+    rho_exact = fields[:, 2]
+    rho_pred = rho_pred[:200]
+    rho_exact = rho_exact[:200]
+    return R + nn.MSELoss()(rho_pred, rho_exact)
 
 
 def CalBCLoss(in_var, out_eq, out_neq, fields):
@@ -499,20 +504,6 @@ def read_data():
     return data_internal, data_left, data_right, data_up, data_down
 
 
-def train(in_var, model_eq, model_neq, loss_fn, optimizer_eq, optimizer_neq, fields):
-    in_var.requires_grad = True
-    optimizer_eq.zero_grad()
-    optimizer_neq.zero_grad()
-    out_eq = model_eq(in_var)
-    out_neq = model_neq(in_var)
-    residuals = CalResidualsLoss(in_var, out_eq, out_neq)
-    loss_BC = CalBCLoss(out_eq, fields)
-
-    loss_total = residuals + loss_BC
-    loss_total.backward()
-    pass
-
-
 if __name__ == "__main__":
     if torch.cuda.is_available():
         device = torch.device("cuda")
@@ -619,6 +610,7 @@ if __name__ == "__main__":
     Optimizer_neq = torch.optim.Adam(params=Model_neq.parameters(), lr=0.001)
 
     star_time = time.time()
+    log_loss = []
 
     _tqdm = tqdm(range(100000))
     for i in _tqdm:
@@ -648,7 +640,9 @@ if __name__ == "__main__":
         out_neq_up = Model_neq(input_up)
         out_neq_down = Model_neq(input_down)
 
-        residuals = CalResidualsLoss(input_internal, out_eq_internal, out_neq_internal)
+        residuals = CalResidualsLoss(
+            input_internal, out_eq_internal, out_neq_internal, field_internal
+        )
         loss_BC = CalBCLoss_2(
             input_BC_all,
             input_left,
@@ -676,10 +670,15 @@ if __name__ == "__main__":
         loss_total.backward()
         Optimizer_eq.step()
         Optimizer_neq.step()
+        if i % 100 == 0:
+            log_loss.append(loss_total.item())
         _tqdm.set_postfix(loss="{:.10f}".format(loss_total.item()))
 
     print("Time:", time.time() - star_time)
     print("Final loss:", loss_total.item())
 
-    torch.save(Model_eq, "./result/Model_eq.pth")
-    torch.save(Model_neq, "./result/Model_neq.pth")
+    log_loss = np.array(log_loss)
+    np.savetxt("./result/log_loss.csv", log_loss)
+    plt.plot(log_loss)
+    torch.save(Model_eq, "./result/Model_eq_z.pth")
+    torch.save(Model_neq, "./result/Model_neq_z.pth")
