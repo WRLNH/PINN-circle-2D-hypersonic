@@ -18,8 +18,6 @@ class Net(DeepModel_single):
 
 
 def CalResidualsLoss(in_var, out_eq, out_neq):
-    loss = nn.MSELoss()
-
     f = out_eq + out_neq / 100000
     f_eq = out_eq
     f_neq = out_neq / 100000
@@ -32,9 +30,10 @@ def CalResidualsLoss(in_var, out_eq, out_neq):
             + D2Q9_Model.xi[i][1] * dfdy[:, i]
             + 1 / tau * f_neq[:, i]
         )
+    R = R**2
     R = torch.sum(R, dim=1)
-    cond = torch.zeros_like(R)
-    return loss(R, cond)
+    R = R.mean()
+    return R
 
 
 def CalBCLoss(in_var, out_eq, out_neq, fields):
@@ -353,6 +352,130 @@ def CalBCLoss(in_var, out_eq, out_neq, fields):
     return loss_rho + loss_rhou + loss_rhov  # + loss_fBC + loss_EBC
 
 
+def CalBCLoss_2(
+    input_BC_all,
+    input_left,
+    input_right,
+    input_up,
+    input_down,
+    out_eq_BC_all,
+    out_eq_left,
+    out_eq_right,
+    out_eq_up,
+    out_eq_down,
+    out_neq_BC_all,
+    out_neq_left,
+    out_neq_right,
+    out_neq_up,
+    out_neq_down,
+    field_BC_all,
+    field_left,
+    field_right,
+    field_up,
+    field_down,
+):
+    """L_BC = L_mBC + L_fBC + L_EBC"""
+
+    """Calculate L_mBC"""
+    rho_exact = field_BC_all[:, 2]
+    u_exact = field_BC_all[:, 3]
+    v_exact = field_BC_all[:, 4]
+    rhou_exact = rho_exact * u_exact
+    rhov_exact = rho_exact * v_exact
+    rho_pred = torch.sum(out_eq_BC_all, dim=1)
+    temp1 = torch.zeros_like(out_eq_BC_all)  # 600 x 9
+    temp2 = torch.zeros_like(out_eq_BC_all)  # 600 x 9
+    for i in range(0, 9):
+        temp1[:, i] = D2Q9_Model.xi[i][0] * out_eq_BC_all[:, i]
+        temp2[:, i] = D2Q9_Model.xi[i][1] * out_eq_BC_all[:, i]
+    rhou_pred = torch.sum(temp1, dim=1)
+    rhov_pred = torch.sum(temp2, dim=1)
+    loss_rho = nn.MSELoss()(rho_pred, rho_exact)
+    loss_rhou = nn.MSELoss()(rhou_pred, rhou_exact)
+    loss_rhov = nn.MSELoss()(rhov_pred, rhov_exact)
+    loss_mBC = loss_rho + loss_rhou + loss_rhov
+
+    """Calculate L_fBC"""
+
+    """Calculate L_EBC"""
+    """Left i = [1, 5, 8]"""
+    f = out_eq_left + out_neq_left / 100000  # 100 x 9
+    f_neq = out_neq_left / 100000  # 100 x 9
+    dfda = gradients(f, input_left)
+    dfdx, dfdy = dfda[..., 0, :], dfda[..., 1, :]
+    D2Q9_range = [1, 5, 8]
+    R = torch.zeros(N_BC_horizontal, 3)  # 100 x 3
+    temp = 0
+    for i in D2Q9_range:
+        R[:, temp] = (
+            D2Q9_Model.xi[i][0] * dfdx[:, i]
+            + D2Q9_Model.xi[i][1] * dfdy[:, i]
+            + 1 / tau * f_neq[:, i]
+        )
+        temp += 1
+    R = R**2
+    R = torch.sum(R, dim=1)
+    loss_EBC_left = R.mean()
+    """right i = [3, 6, 7]"""
+    f = out_eq_right + out_neq_right / 100000  # 100 x 9
+    f_neq = out_neq_right / 100000  # 100 x 9
+    dfda = gradients(f, input_right)
+    dfdx, dfdy = dfda[..., 0, :], dfda[..., 1, :]
+    D2Q9_range = [3, 6, 7]
+    R = torch.zeros(N_BC_horizontal, 3)  # 100 x 3
+    temp = 0
+    for i in D2Q9_range:
+        R[:, temp] = (
+            D2Q9_Model.xi[i][0] * dfdx[:, i]
+            + D2Q9_Model.xi[i][1] * dfdy[:, i]
+            + 1 / tau * f_neq[:, i]
+        )
+        temp += 1
+    R = R**2
+    R = torch.sum(R, dim=1)
+    loss_EBC_right = R.mean()
+    """up i = [4, 7, 8]"""
+    f = out_eq_up + out_neq_up / 100000  # 200 x 9
+    f_neq = out_neq_up / 100000  # 200 x 9
+    dfda = gradients(f, input_up)
+    dfdx, dfdy = dfda[..., 0, :], dfda[..., 1, :]
+    D2Q9_range = [4, 7, 8]
+    R = torch.zeros(N_BC_vertical, 3)  # 200 x 3
+    temp = 0
+    for i in D2Q9_range:
+        R[:, temp] = (
+            D2Q9_Model.xi[i][0] * dfdx[:, i]
+            + D2Q9_Model.xi[i][1] * dfdy[:, i]
+            + 1 / tau * f_neq[:, i]
+        )
+        temp += 1
+    R = R**2
+    R = torch.sum(R, dim=1)
+    loss_EBC_up = R.mean()
+    """down i = [2, 5, 6]"""
+    f = out_eq_down + out_neq_down / 100000  # 100 x 9
+    f_neq = out_neq_down / 100000  # 100 x 9
+    dfda = gradients(f, input_down)
+    dfdx, dfdy = dfda[..., 0, :], dfda[..., 1, :]
+    D2Q9_range = [2, 5, 6]
+    R = torch.zeros(N_BC_vertical, 3)  # 200 x 3
+    temp = 0
+    for i in D2Q9_range:
+        R[:, temp] = (
+            D2Q9_Model.xi[i][0] * dfdx[:, i]
+            + D2Q9_Model.xi[i][1] * dfdy[:, i]
+            + 1 / tau * f_neq[:, i]
+        )
+        temp += 1
+    R = R**2
+    R = torch.sum(R, dim=1)
+    loss_EBC_down = R.mean()
+
+    loss_EBC = loss_EBC_left + loss_EBC_right + loss_EBC_up + loss_EBC_down
+
+    return loss_mBC + loss_EBC
+
+
 def setup_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
@@ -420,7 +543,6 @@ if __name__ == "__main__":
     right = right[:N_BC_horizontal]
     up = up[:N_BC_vertical]
     down = down[:N_BC_vertical]
-
     input = np.concatenate(
         [internal[:, 0:2], left[:, 0:2], right[:, 0:2], up[:, 0:2], down[:, 0:2]],
         axis=0,
@@ -428,7 +550,67 @@ if __name__ == "__main__":
     field = np.concatenate(
         [internal[:, 2:], left[:, 2:], right[:, 2:], up[:, 2:], down[:, 2:]], axis=0
     )
+
+    input_internal = torch.tensor(
+        input[:N_internal], dtype=torch.float32, device=device
+    )
+    input_BC_all = torch.tensor(input[N_internal:], dtype=torch.float32, device=device)
+    input_left = torch.tensor(
+        input[N_internal : N_internal + N_BC_horizontal],
+        dtype=torch.float32,
+        device=device,
+    )
+    input_right = torch.tensor(
+        input[N_internal + N_BC_horizontal : N_internal + 2 * N_BC_horizontal],
+        dtype=torch.float32,
+        device=device,
+    )
+    input_up = torch.tensor(
+        input[
+            N_internal
+            + 2 * N_BC_horizontal : N_internal
+            + 2 * N_BC_horizontal
+            + N_BC_vertical
+        ],
+        dtype=torch.float32,
+        device=device,
+    )
+    input_down = torch.tensor(
+        input[N_internal + 2 * N_BC_horizontal + N_BC_vertical :],
+        dtype=torch.float32,
+        device=device,
+    )
     input = torch.tensor(input, dtype=torch.float32, device=device)
+
+    field_internal = torch.tensor(
+        field[:N_internal], dtype=torch.float32, device=device
+    )
+    field_BC_all = torch.tensor(field[N_internal:], dtype=torch.float32, device=device)
+    field_left = torch.tensor(
+        field[N_internal : N_internal + N_BC_horizontal],
+        dtype=torch.float32,
+        device=device,
+    )
+    field_right = torch.tensor(
+        field[N_internal + N_BC_horizontal : N_internal + 2 * N_BC_horizontal],
+        dtype=torch.float32,
+        device=device,
+    )
+    field_up = torch.tensor(
+        field[
+            N_internal
+            + 2 * N_BC_horizontal : N_internal
+            + 2 * N_BC_horizontal
+            + N_BC_vertical
+        ],
+        dtype=torch.float32,
+        device=device,
+    )
+    field_down = torch.tensor(
+        field[N_internal + 2 * N_BC_horizontal + N_BC_vertical :],
+        dtype=torch.float32,
+        device=device,
+    )
     field = torch.tensor(field, dtype=torch.float32, device=device)
 
     Model_eq = Net(planes=[2] + 6 * [40] + [9]).to(device)
@@ -441,12 +623,55 @@ if __name__ == "__main__":
     _tqdm = tqdm(range(100000))
     for i in _tqdm:
         input.requires_grad = True
+        input_internal.requires_grad = True
+        input_BC_all.requires_grad = True
+        input_left.requires_grad = True
+        input_right.requires_grad = True
+        input_up.requires_grad = True
+        input_down.requires_grad = True
+
         Optimizer_eq.zero_grad()
         Optimizer_neq.zero_grad()
-        out_eq = Model_eq(input)
-        out_neq = Model_neq(input)
-        residuals = CalResidualsLoss(input, out_eq, out_neq)
-        loss_BC = CalBCLoss(input, out_eq, out_neq, field)
+
+        # out_eq = Model_eq(input)
+        out_eq_internal = Model_eq(input_internal)
+        out_eq_BC_all = Model_eq(input_BC_all)
+        out_eq_left = Model_eq(input_left)
+        out_eq_right = Model_eq(input_right)
+        out_eq_up = Model_eq(input_up)
+        out_eq_down = Model_eq(input_down)
+        # out_neq = Model_neq(input)
+        out_neq_internal = Model_neq(input_internal)
+        out_neq_BC_all = Model_neq(input_BC_all)
+        out_neq_left = Model_neq(input_left)
+        out_neq_right = Model_neq(input_right)
+        out_neq_up = Model_neq(input_up)
+        out_neq_down = Model_neq(input_down)
+
+        residuals = CalResidualsLoss(input_internal, out_eq_internal, out_neq_internal)
+        loss_BC = CalBCLoss_2(
+            input_BC_all,
+            input_left,
+            input_right,
+            input_up,
+            input_down,
+            out_eq_BC_all,
+            out_eq_left,
+            out_eq_right,
+            out_eq_up,
+            out_eq_down,
+            out_neq_BC_all,
+            out_neq_left,
+            out_neq_right,
+            out_neq_up,
+            out_neq_down,
+            field_BC_all,
+            field_left,
+            field_right,
+            field_up,
+            field_down,
+        )
+        # loss_BC = CalBCLoss(input, out_eq, out_neq, field)
         loss_total = residuals + loss_BC
         loss_total.backward()
         Optimizer_eq.step()
@@ -456,5 +681,5 @@ if __name__ == "__main__":
     print("Time:", time.time() - star_time)
     print("Final loss:", loss_total.item())
 
-    torch.save(Model_eq, "./resualt/Model_eq.pth")
-    torch.save(Model_neq, "./resualt/Model_neq.pth")
+    torch.save(Model_eq, "./result/Model_eq.pth")
+    torch.save(Model_neq, "./result/Model_neq.pth")

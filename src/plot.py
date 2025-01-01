@@ -36,12 +36,12 @@ u = rhou / rho
 v = rhov / rho
 
 plt.subplot(2, 1, 1)
-plt.scatter(x, y, c=rho, s=1, cmap="rainbow")
+plt.scatter(x, y, c=rhou, s=1, cmap="rainbow")
 plt.colorbar()
 plt.axis("equal")
 
 plt.subplot(2, 1, 2)
-plt.scatter(x, y, c=rho_exact, s=1, cmap="rainbow")
+plt.scatter(x, y, c=rhou_exact, s=1, cmap="rainbow")
 plt.colorbar()
 plt.axis("equal")
 plt.show()
